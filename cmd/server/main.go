@@ -1,11 +1,10 @@
 package main
 
 import (
-	"fmt"
-	"log"
-
 	"ChatTool/internal/server/core"
 	"ChatTool/internal/server/transport"
+	"fmt"
+	"log"
 )
 
 func main() {
@@ -14,10 +13,7 @@ func main() {
 	go hub.Run() // 启动 Hub 的事件处理循环
 
 	// 创建 TCP 服务器
-	server := &transport.Server{
-		Address: "0.0.0.0", // 监听所有网络接口
-		Port:    8080,      // 监听端口
-	}
+	server := transport.NewServer("0.0.0.0", 8080, hub)
 
 	fmt.Println("服务器正在启动...")
 	err := server.Start()

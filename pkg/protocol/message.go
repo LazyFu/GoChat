@@ -9,6 +9,8 @@ const (
 	LoginRequest   = "LoginRequest"
 	TextMessage    = "TextMessage"
 	UserListUpdate = "UserListUpdate"
+	PrivateMessage = "PrivateMessage"
+	GroupMessage   = "GroupMessage"
 )
 
 // Message represents a basic chat message structure.

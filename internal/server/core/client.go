@@ -1,7 +1,9 @@
 package core
 
 import (
+	"ChatTool/pkg/protocol"
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"net"
 	"time"
@@ -37,14 +39,21 @@ func (c *Client) ReadPump() {
 		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
 		// 读取数据
-		message, err := reader.ReadBytes('\n') // 假设消息以换行符结尾
+		payload, err := protocol.Decode(reader)
 		if err != nil {
 			fmt.Printf("读取客户端数据失败: %v\n", err)
 			break
 		}
+		var message protocol.Message
+		err = json.Unmarshal(payload, &message)
+		if err != nil {
+			fmt.Printf("反序列化消息失败: %v\n", err)
+			continue
+		}
+		message.Sender = c.ID // 设置消息发送者为当前客户端ID
 
-		// 将消息广播给 Hub
-		c.hub.Broadcast <- message
+		// 将消息转发给 Hub
+		c.hub.Forward <- &message
 	}
 }
 
@@ -59,7 +68,8 @@ func (c *Client) WritePump() {
 		c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 
 		// 发送消息
-		_, err := c.conn.Write(message)
+		frame, _ := protocol.Encode(message)
+		_, err := c.conn.Write(frame)
 		if err != nil {
 			fmt.Printf("发送消息失败: %v\n", err)
 			return

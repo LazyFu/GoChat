@@ -1,17 +1,19 @@
 package core
 
 import (
+	"ChatTool/pkg/protocol"
+	"encoding/json"
 	"fmt"
 	"sync"
 )
 
 // Hub 负责管理所有客户端连接和消息广播
 type Hub struct {
-	Clients    map[string]*Client // 存储所有已连接的客户端
-	Register   chan *Client       // 注册新客户端的通道
-	Unregister chan *Client       // 注销客户端的通道
-	Broadcast  chan []byte        // 广播消息的通道
-	mu         sync.Mutex         // 保护 clients 的互斥锁
+	Clients    map[string]*Client     // 存储所有已连接的客户端
+	Register   chan *Client           // 注册新客户端的通道
+	Unregister chan *Client           // 注销客户端的通道
+	Forward    chan *protocol.Message // 用于转发消息的通道
+	mu         sync.Mutex             // 保护 clients 的互斥锁
 }
 
 // NewHub 创建一个新的 Hub 实例
@@ -20,7 +22,7 @@ func NewHub() *Hub {
 		Clients:    make(map[string]*Client),
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
-		Broadcast:  make(chan []byte),
+		Forward:    make(chan *protocol.Message),
 		mu:         sync.Mutex{},
 	}
 }
@@ -46,18 +48,27 @@ func (h *Hub) Run() {
 			}
 			h.mu.Unlock()
 
-		case message := <-h.Broadcast:
-			// 处理消息广播
+		case message := <-h.Forward:
+			// 处理消息转发
 			h.mu.Lock()
-			for id, client := range h.Clients {
-				select {
-				case client.Send <- message:
-					fmt.Printf("消息已发送给客户端: %s\n", id)
-				default:
-					// 如果客户端的发送通道已满，则关闭连接
-					close(client.Send)
-					delete(h.Clients, id)
-					fmt.Printf("客户端连接已关闭: %s\n", id)
+			switch message.Type {
+			case protocol.PrivateMessage:
+				// 私聊消息处理
+				if recipient, ok := h.Clients[message.Recipient]; ok {
+					payload, _ := json.Marshal(message)
+					recipient.Send <- payload
+				}
+			case protocol.GroupMessage:
+				// 群聊消息处理
+				for _, client := range h.Clients {
+					payload, _ := json.Marshal(message)
+					client.Send <- payload
+				}
+			default:
+				// 广播消息处理
+				for _, client := range h.Clients {
+					payload, _ := json.Marshal(message)
+					client.Send <- payload
 				}
 			}
 			h.mu.Unlock()
