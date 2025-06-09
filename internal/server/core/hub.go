@@ -2,7 +2,6 @@ package core
 
 import (
 	"ChatTool/pkg/protocol"
-	"encoding/json"
 	"fmt"
 	"sync"
 )
@@ -13,7 +12,7 @@ type Hub struct {
 	Register   chan *Client           // 注册新客户端的通道
 	Unregister chan *Client           // 注销客户端的通道
 	Forward    chan *protocol.Message // 用于转发消息的通道
-	mu         sync.Mutex             // 保护 clients 的互斥锁
+	mu         sync.RWMutex           // 保护 clients 的互斥锁
 }
 
 // NewHub 创建一个新的 Hub 实例
@@ -23,7 +22,6 @@ func NewHub() *Hub {
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
 		Forward:    make(chan *protocol.Message),
-		mu:         sync.Mutex{},
 	}
 }
 
@@ -50,28 +48,48 @@ func (h *Hub) Run() {
 
 		case message := <-h.Forward:
 			// 处理消息转发
-			h.mu.Lock()
-			switch message.Type {
-			case protocol.PrivateMessage:
-				// 私聊消息处理
-				if recipient, ok := h.Clients[message.Recipient]; ok {
-					payload, _ := json.Marshal(message)
-					recipient.Send <- payload
-				}
-			case protocol.GroupMessage:
-				// 群聊消息处理
-				for _, client := range h.Clients {
-					payload, _ := json.Marshal(message)
-					client.Send <- payload
-				}
-			default:
-				// 广播消息处理
-				for _, client := range h.Clients {
-					payload, _ := json.Marshal(message)
-					client.Send <- payload
-				}
-			}
-			h.mu.Unlock()
+			h.broadcast(message)
+			// 	h.mu.Lock()
+			// 	switch message.Type {
+			// 	case protocol.PrivateMessage:
+			// 		// 私聊消息处理
+			// 		if recipient, ok := h.Clients[message.Recipient]; ok {
+			// 			recipient.Send <- *message
+			// 		}
+			// 	case protocol.GroupMessage:
+			// 		// 群聊消息处理
+			// 		for _, client := range h.Clients {
+			// 			client.Send <- *message
+			// 		}
+			// 	default:
+			// 		// 广播消息处理
+			// 		for _, client := range h.Clients {
+			// 			client.Send <- *message
+			// 		}
+			// 	}
+			// 	h.mu.Unlock()
+		}
+	}
+}
+
+func (h *Hub) broadcast(message *protocol.Message) {
+	// 变化点 3：只在读取客户端列表时加锁，并尽快释放
+	h.mu.RLock()         // 读操作，上读锁
+	defer h.mu.RUnlock() // 函数结束时自动释放读锁
+
+	// (您的私聊和群聊逻辑可以放在这里)
+	// 这里我们先实现一个健壮的广播
+	for _, client := range h.Clients {
+		// 变化点 4：使用非阻塞发送，防止单个慢客户端冻结整个hub
+		select {
+		case client.Send <- *message:
+			// 消息成功放入通道
+		default:
+			// 如果接收方的Send通道满了，说明该客户端处理不过来。
+			// 我们不能等待，而是直接跳过，并考虑将其断开。
+			fmt.Printf("警告: 客户端 %s 的消息通道已满，消息被丢弃。\n", client.ID)
+			// 在实际生产中，您可能会在这里触发一个清理机制，
+			// 但现在简单地丢弃消息可以防止死锁。
 		}
 	}
 }
