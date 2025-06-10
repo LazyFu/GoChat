@@ -2,7 +2,10 @@ module ChatTool
 
 go 1.24.3
 
-require fyne.io/fyne/v2 v2.6.1
+require (
+	fyne.io/fyne/v2 v2.6.1
+	github.com/google/uuid v1.6.0
+)
 
 require (
 	fyne.io/systray v1.11.0 // indirect

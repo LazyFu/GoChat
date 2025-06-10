@@ -6,19 +6,23 @@ import (
 	"fmt"
 	"net"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Client 表示一个连接的客户端
 type Client struct {
-	ID   string                // 客户端唯一标识（如用户ID或连接地址）
-	Send chan protocol.Message // 用于向客户端发送消息的通道
-	hub  *Hub                  // 指向中心枢纽的指针
-	conn net.Conn              // TCP 连接
+	ID       string                // 客户端唯一标识（如用户ID或连接地址）
+	Username string                // 客户端用户名
+	Send     chan protocol.Message // 用于向客户端发送消息的通道
+	hub      *Hub                  // 指向中心枢纽的指针
+	conn     net.Conn              // TCP 连接
 }
 
 // NewClient 创建一个新的 Client 实例
 func NewClient(hub *Hub, conn net.Conn) *Client {
 	return &Client{
+		ID:   uuid.New().String(), // 生成唯一ID
 		hub:  hub,
 		conn: conn,
 		Send: make(chan protocol.Message, 256), // 带缓冲的通道
@@ -46,13 +50,15 @@ func (c *Client) ReadPump() {
 
 		message.Timestamp = time.Now()
 
-		if c.ID == "" && message.Type == protocol.LoginRequest {
-			c.ID = message.Sender // 如果是登录请求，设置客户端ID
+		if c.Username == "" {
+			if message.Type == protocol.LoginRequest {
+				c.Username = message.Sender // 设置用户名为发送者
+				c.hub.Register <- c         // 注册客户端到 Hub
+			}
+		} else {
+			message.Sender = c.Username // 如果已设置用户名，则使用它
+			c.hub.Forward <- message    // 将消息转发给 Hub
 		}
-		message.Sender = c.ID // 设置消息发送者为当前客户端ID
-
-		// 将消息转发给 Hub
-		c.hub.Forward <- message
 	}
 }
 
@@ -64,7 +70,7 @@ func (c *Client) WritePump() {
 
 	for message := range c.Send {
 		// 设置写入超时
-		c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		c.conn.SetWriteDeadline(time.Now().Add(60 * time.Second))
 
 		// 发送消息
 		frame, err := protocol.EncodeMessage(message)

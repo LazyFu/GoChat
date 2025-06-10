@@ -109,16 +109,15 @@ func (ui *UI) Run() {
 			// 将消息格式化后添加到数据绑定列表中
 			// Fyne的数据绑定是线程安全的，因此可以安全地从任何goroutine调用
 			timestampStr := msg.Timestamp.Format("15:04:05") // 格式化为 HH:MM:SS
-
 			formattedMsg := fmt.Sprintf("[%s] %s: %s", timestampStr, msg.Sender, msg.Payload)
-
 			ui.chatHistory.Append(formattedMsg)
 		}
-
-		// 当通道关闭后（意味着客户端核心已关闭），可以给出提示或禁用UI
-		ui.input.Disable()
-		ui.sendButton.Disable()
-		ui.chatHistory.Append("--- You have been disconnected ---")
+		fyne.Do(func() {
+			ui.input.Disable()
+			ui.sendButton.Disable()
+			ui.chatHistory.Append("--- You have been disconnected ---")
+			ui.app.Quit()
+		})
 	}()
 
 	// 启动并运行Fyne应用，这将阻塞主goroutine直到窗口关闭

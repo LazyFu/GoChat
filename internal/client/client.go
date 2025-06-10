@@ -11,7 +11,7 @@ import (
 )
 
 type Client struct {
-	ID       string        // 客户端唯一标识（如用户ID或连接地址）
+	username string        // 客户端唯一标识（如用户ID或连接地址）
 	conn     net.Conn      // TCP 连接
 	reader   *bufio.Reader // 用于读取数据的缓冲读取器
 	wg       sync.WaitGroup
@@ -114,7 +114,7 @@ func (c *Client) Close() {
 	if c.conn != nil {
 		c.conn.Close() // 关闭连接
 	}
-	c.wg.Wait() // 等待所有 goroutine 完成
+	//c.wg.Wait() // 等待所有 goroutine 完成
 }
 
 func isNetClosedErr(err error) bool {

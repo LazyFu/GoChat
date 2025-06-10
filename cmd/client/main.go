@@ -1,8 +1,8 @@
-// File: cmd/client/main.go
 package main
 
 import (
 	"ChatTool/internal/client"
+	"ChatTool/pkg/protocol"
 	"fmt"
 	"os"
 	"time"
@@ -11,7 +11,7 @@ import (
 )
 
 // 定义服务器的地址和端口
-const serverAddress = "localhost:8080"
+const serverAddress = "127.0.0.1:8080"
 
 func main() {
 	fyneApp := app.New()
@@ -35,12 +35,17 @@ func main() {
 	}
 	fmt.Printf("[%s] 成功连接到服务器！\n", username)
 
-	defer coreClient.Close()
 	coreClient.Start()
+
+	loginMessage := protocol.Message{
+		Type:   protocol.LoginRequest, // 使用一个特殊的类型来标识这是登录/注册消息
+		Sender: username,
+	}
+	coreClient.Send(loginMessage) // 将消息放入发送队列
 
 	gui := client.NewUI(fyneApp, coreClient, username)
 
 	gui.Run()
-
+	coreClient.Close() // 确保在程序结束时关闭客户端连接
 	fmt.Printf("[%s] 客户端已关闭。\n", username)
 }
