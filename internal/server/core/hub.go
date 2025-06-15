@@ -1,3 +1,4 @@
+// File: internal/server/core/hub.go
 package core
 
 import (
@@ -6,27 +7,23 @@ import (
 	"sync"
 )
 
-// Hub 负责管理所有客户端连接和消息广播
-type Hub struct {
-	Clients map[string]*Client // 存储所有已连接的客户端
-	Groups  map[string]*Group  // 存储所有群组
-
-	Register   chan *Client           // 注册新客户端的通道
-	Unregister chan *Client           // 注销客户端的通道
-	JoinGroup  chan *GroupCommand     // 加入群组的通道
-	LeaveGroup chan *GroupCommand     // 离开群组的通道
-	Forward    chan *protocol.Message // 用于转发消息的通道
-
-	mu      sync.RWMutex // 保护 clients 的锁
-	groupMu sync.RWMutex // 保护 groups 的锁
-}
-
 type GroupCommand struct {
-	GroupName string  // 群组名称
-	Client    *Client // 发起命令的客户端
+	Client    *Client
+	GroupName string
 }
 
-// NewHub 创建一个新的 Hub 实例
+type Hub struct {
+	Clients    map[string]*Client
+	Groups     map[string]*Group
+	Register   chan *Client
+	Unregister chan *Client
+	JoinGroup  chan *GroupCommand
+	LeaveGroup chan *GroupCommand
+	Forward    chan *protocol.Message
+	mu         sync.RWMutex
+	groupMu    sync.RWMutex
+}
+
 func NewHub() *Hub {
 	return &Hub{
 		Clients:    make(map[string]*Client),
@@ -39,7 +36,6 @@ func NewHub() *Hub {
 	}
 }
 
-// Run 启动 Hub，处理注册、注销和广播事件
 func (h *Hub) Run() {
 	for {
 		select {
@@ -52,48 +48,51 @@ func (h *Hub) Run() {
 		case cmd := <-h.LeaveGroup:
 			h.handleLeaveGroup(cmd.Client, cmd.GroupName)
 		case message := <-h.Forward:
+			// Forward通道现在只处理需要路由的消息
 			h.handleForwardMessage(message)
 		}
 	}
 }
 
+// --- 事件处理函数 ---
+
 func (h *Hub) handleRegister(client *Client) {
 	h.mu.Lock()
 	h.Clients[client.ID] = client
 	h.mu.Unlock()
-	fmt.Printf("客户端已注册: %s\n", client.ID)
-	h.broadcastUserList()
+
+	fmt.Printf("客户端已注册: %s (Username: %s)\n", client.ID, client.Username)
+	h.broadcastPresence() // 广播最新状态
 }
 
 func (h *Hub) handleUnregister(client *Client) {
+	// 从所有群组中移除该客户端
+	h.removeClientFromAllGroups(client)
+
 	h.mu.Lock()
 	if _, ok := h.Clients[client.ID]; ok {
-		// 用户下线前，让他离开所有已加入的群组
-		for _, group := range h.Groups {
-			h.handleLeaveGroup(client, group.Name)
-		}
 		delete(h.Clients, client.ID)
 		close(client.Send)
 		fmt.Printf("客户端已注销: %s (Username: %s)\n", client.ID, client.Username)
-		h.broadcastUserList()
 	}
 	h.mu.Unlock()
+
+	h.broadcastPresence() // 广播最新状态
 }
 
 func (h *Hub) handleJoinGroup(client *Client, groupName string) {
-	// 为保证线程安全，对Groups map的写操作需要加锁
 	h.groupMu.Lock()
-	// 步骤1: 查找群组，如果不存在则自动创建 TODO
 	group, ok := h.Groups[groupName]
 	if !ok {
-		group = NewGroup(groupName) // NewGroup是您之前创建的那个函数
+		group = NewGroup(groupName)
 		h.Groups[groupName] = group
 		fmt.Printf("新群组被自动创建: %s\n", groupName)
-		defer h.broadcastUserList()
 	}
-	h.groupMu.Unlock()
-	group.AddClient(client)
+	h.groupMu.Unlock() // 获取到group后即可解锁
+
+	group.AddClient(client) // AddClient内部有自己的锁，是安全的
 	fmt.Printf("客户端 %s 加入了群组 %s\n", client.Username, groupName)
+	h.broadcastPresence() // 广播最新状态
 }
 
 func (h *Hub) handleLeaveGroup(client *Client, groupName string) {
@@ -105,31 +104,39 @@ func (h *Hub) handleLeaveGroup(client *Client, groupName string) {
 		if len(group.Clients) == 0 {
 			delete(h.Groups, groupName)
 			fmt.Printf("群组 %s 因成员为空已被销毁。\n", groupName)
-			defer h.broadcastUserAndGroupList()
 		}
 	}
 	h.groupMu.Unlock()
+
+	h.broadcastPresence() // 广播最新状态
 }
 
 func (h *Hub) handleForwardMessage(message *protocol.Message) {
-	// 这个函数现在只关心消息应该发给谁
 	if message.GroupName != "" {
 		h.sendGroupMessage(message)
 	} else if message.Recipient != "" {
 		h.sendPrivateMessage(message)
 	} else {
+		// 假设所有非私聊、非群聊的消息都是广播
 		h.broadcastMessage(message)
 	}
 }
 
-func (h *Hub) broadcastUserAndGroupList() {
-	// 调用辅助函数获取用户列表
-	users := h.getUsernames()
+// --- 消息发送与广播辅助函数 ---
 
-	// --- 获取群组列表的逻辑保持不变 ---
+// broadcastPresence 是我们统一的、唯一的“状态广播”函数
+func (h *Hub) broadcastPresence() {
+	// 1. 安全地收集所有需要的数据
+	h.mu.RLock()
+	allClients := make([]*Client, 0, len(h.Clients))
+	users := make([]string, 0, len(h.Clients))
+	for _, client := range h.Clients {
+		allClients = append(allClients, client)
+		users = append(users, client.Username)
+	}
+	h.mu.RUnlock()
+
 	h.groupMu.RLock()
-	defer h.groupMu.RUnlock()
-
 	groups := make(map[string][]string)
 	for _, g := range h.Groups {
 		members := []string{}
@@ -140,34 +147,34 @@ func (h *Hub) broadcastUserAndGroupList() {
 		g.mu.RUnlock()
 		groups[g.Name] = members
 	}
+	h.groupMu.RUnlock()
 
-	treeData := protocol.TreeData{Users: users, Groups: groups}
+	// 2. 组装统一的状态消息
+	treeData := protocol.TreePayload{Users: users, Groups: groups}
 	message := protocol.Message{Type: protocol.TreeUpdate, TreePayload: treeData}
 
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for _, client := range h.Clients {
+	// 3. 将消息广播给所有客户端
+	for _, client := range allClients {
 		select {
 		case client.Send <- message:
 		default:
+			fmt.Printf("警告: 客户端 %s 的消息通道已满，状态更新消息被丢弃。\n", client.Username)
 		}
 	}
 }
 
-func (h *Hub) broadcastUserList() {
-	usernames := h.getUsernames()
-	message := protocol.Message{
-		Type:     protocol.UserListUpdate,
-		UserList: usernames,
-	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for _, client := range h.Clients {
-		select {
-		case client.Send <- message:
-		default:
-			fmt.Printf("警告: 客户端 %s 的消息通道已满，用户列表消息被丢弃。\n", client.ID)
+func (h *Hub) removeClientFromAllGroups(client *Client) {
+	h.groupMu.RLock()
+	groupsToModify := make([]*Group, 0)
+	for _, group := range h.Groups {
+		if _, ok := group.Clients[client]; ok {
+			groupsToModify = append(groupsToModify, group)
 		}
+	}
+	h.groupMu.RUnlock()
+
+	for _, group := range groupsToModify {
+		h.handleLeaveGroup(client, group.Name)
 	}
 }
 
@@ -183,7 +190,7 @@ func (h *Hub) sendGroupMessage(message *protocol.Message) {
 		for client := range group.Clients {
 			select {
 			case client.Send <- *message:
-				fmt.Printf("消息已发送到群组 %s 的客户端 %s: %s\n", message.GroupName, client.Username, message.Payload)
+				fmt.Printf("消息已发送到群组 %s 的客户端 %s: %s\n", message.GroupName, client.Username, message.TextPayload)
 			default:
 				fmt.Printf("警告: 群组 %s 的客户端 %s 的消息通道已满，消息被丢弃。\n", message.GroupName, client.Username)
 			}
@@ -230,7 +237,7 @@ func (h *Hub) broadcastMessage(message *protocol.Message) {
 	for _, client := range h.Clients {
 		select {
 		case client.Send <- *message:
-			fmt.Printf("消息已发送到客户端 %s: %s\n", client.ID, message.Payload)
+			fmt.Printf("消息已发送到客户端 %s: %s\n", client.ID, message.TextPayload)
 			// 消息成功放入通道
 		default:
 			fmt.Printf("警告: 客户端 %s 的消息通道已满，消息被丢弃。\n", client.ID)
@@ -238,14 +245,4 @@ func (h *Hub) broadcastMessage(message *protocol.Message) {
 			// 但现在简单地丢弃消息可以防止死锁。
 		}
 	}
-}
-
-func (h *Hub) getUsernames() []string {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	usernames := make([]string, 0, len(h.Clients))
-	for _, client := range h.Clients {
-		usernames = append(usernames, client.Username)
-	}
-	return usernames
 }

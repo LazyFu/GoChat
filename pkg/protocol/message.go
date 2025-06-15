@@ -7,34 +7,42 @@ import (
 
 // 定义消息类型常量
 const (
-	LoginRequest   = "LoginRequest"
-	TextMessage    = "TextMessage"
-	UserListUpdate = "UserListUpdate"
-	PrivateMessage = "PrivateMessage"
-	TreeUpdate     = "tree_update"
-	// 群聊
-	GroupMessage       = "GroupMessage"
-	CreateGroupRequest = "CreateGroupRequest"
-	JoinGroupRequest   = "JoinGroupRequest"
-	LeaveGroupRequest  = "LeaveGroupRequest"
-	GroupNotification  = "GroupNotification"
+	LoginRequest       = "cmd_login"
+	CreateGroupRequest = "cmd_create_group"
+	JoinGroupRequest   = "cmd_join_group"
+	LeaveGroupRequest  = "cmd_leave_group"
+
+	// --- 数据/通知类型 ---
+	TreeUpdate         = "data_tree_update" // 树状列表更新
+	BroadcastMessage   = "msg_broadcast"    // 广播消息
+	PrivateMessage     = "msg_private"      // 私聊消息
+	GroupMessage       = "msg_group"        // 群聊消息
+	PrivateFileMessage = "file_private"     // 私聊文件
+	GroupFileMessage   = "file_group"       // 群聊文件
 )
 
-type TreeData struct {
-	Users  []string            `json:"users"`
-	Groups map[string][]string `json:"groups"` // key是群名, value是成员列表
+type TreePayload struct {
+	Users  []string            `json:"users"`  // 在线用户列表
+	Groups map[string][]string `json:"groups"` // 群组列表，键为群组名，值为成员列表
+}
+
+type FilePayload struct {
+	Name string `json:"name"` // 文件名
+	Size int64  `json:"size"` // 文件大小
+	Data []byte `json:"data"` // 文件内容 (通常是Base64编码后的)
 }
 
 // Message represents a basic chat message structure.
 type Message struct {
-	Type        string    `json:"type"`                   // 消息类型
-	Payload     string    `json:"payload"`                // 消息内容
-	TreePayload TreeData  `json:"tree_payload,omitempty"` // 树形结构的消息内容
-	Sender      string    `json:"sender"`                 // 发送者
-	Recipient   string    `json:"recipient,omitempty"`    // 接收者
-	GroupName   string    `json:"groupname,omitempty"`    // 群组名称
-	UserList    []string  `json:"userlist"`               // 用户列表
-	Timestamp   time.Time `json:"timestamp"`              // 时间戳
+	Type      string    `json:"type"`      // 消息类型
+	Sender    string    `json:"sender"`    // 发送者
+	Timestamp time.Time `json:"timestamp"` // 时间戳
+
+	Recipient   string      `json:"recipient,omitempty"`    // 接收者
+	GroupName   string      `json:"groupname,omitempty"`    // 群组名称
+	TextPayload string      `json:"text_payload,omitempty"` // 文本内容
+	FilePayload FilePayload `json:"file_payload"`           // 文件内容
+	TreePayload TreePayload `json:"tree_payload,omitempty"` // 树状结构数据
 }
 
 // Serialize 将 Message 序列化为 JSON 字符串

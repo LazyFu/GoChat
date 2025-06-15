@@ -32,32 +32,34 @@ func NewClient(hub *Hub, conn net.Conn) *Client {
 // ReadPump 负责从客户端读取数据并交给 Hub 处理
 func (c *Client) ReadPump() {
 	defer func() {
-		c.hub.Unregister <- c // 客户端断开时通知 Hub 注销
+		c.hub.Unregister <- c
 		c.conn.Close()
 	}()
 
 	reader := bufio.NewReader(c.conn)
-	for {
-		// 设置读取超时
-		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	for { // 这个for循环必须是无限的，只有在网络错误时才break
+		c.conn.SetReadDeadline(time.Now().Add(120 * time.Second))
 
-		// 读取数据
 		message, err := protocol.DecodeMessage(reader)
 		if err != nil {
-			fmt.Printf("读取客户端数据失败: %v\n", err)
+			fmt.Printf("读取客户端 %s (%s) 数据失败: %v\n", c.Username, c.ID, err)
 			break
 		}
 
 		message.Timestamp = time.Now()
 
-		if c.Username == "" {
-			if message.Type == protocol.LoginRequest {
-				c.Username = message.Sender // 设置用户名为发送者
-				c.hub.Register <- c         // 注册客户端到 Hub
+		if c.Username == "" { // 处理首次登录消息
+			if message.Type == protocol.LoginRequest && message.Sender != "" {
+				c.Username = message.Sender
+				c.hub.Register <- c // 注册
+				// 注册后，这个分支就结束了，for循环会继续下一次迭代，等待聊天消息
+			} else {
+				fmt.Printf("警告: 来自 %s 的无效登录请求，连接已关闭。\n", c.conn.RemoteAddr())
+				break // 无效登录，退出循环
 			}
-		} else {
-			message.Sender = c.Username // 如果已设置用户名，则使用它
-			c.hub.Forward <- message    // 将消息转发给 Hub
+		} else { // 处理已登录用户的后续消息
+			message.Sender = c.Username
+			c.hub.Forward <- message
 		}
 	}
 }
