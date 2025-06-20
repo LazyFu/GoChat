@@ -1,34 +1,61 @@
-// File: internal/client/ui.go
 package client
 
 import (
-	"ChatTool/pkg/protocol" // 请确认您的模块名
+	"ChatTool/pkg/protocol"
+	"encoding/base64"
 	"fmt"
+	"io/ioutil"
+	"slices"
 	"sync"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
-// UI 封装了所有UI组件和状态
+type customEntry struct {
+	widget.Entry
+	app fyne.App
+}
+
+func newCustomEntry(app fyne.App) *customEntry {
+	entry := &customEntry{
+		app: app,
+	}
+	entry.ExtendBaseWidget(entry)
+	return entry
+}
+
+func (e *customEntry) TappedSecondary(pe *fyne.PointEvent) {
+
+	clipboard := e.app.Clipboard()
+
+	pasteItem := fyne.NewMenuItem("粘贴", func() {
+		e.SetText(e.Text + clipboard.Content())
+	})
+
+	// 创建并显示一个只包含“粘贴”的安全弹出菜单
+	menu := fyne.NewMenu("", pasteItem)
+	widget.ShowPopUpMenuAtPosition(menu, e.app.Driver().CanvasForObject(e), pe.AbsolutePosition)
+}
+
+// --- UI 结构体定义  ---
 type UI struct {
 	client *Client
 	app    fyne.App
 	window fyne.Window
 
-	// UI 组件
-	accordion *widget.Accordion // 用手风琴代替树
-	chatTabs  *container.AppTabs
+	accordion *widget.Accordion
+	chatTabs  *container.DocTabs
 
-	// 状态数据和数据绑定
 	username          string
-	usersListBinding  binding.StringList // 专门为用户列表提供数据
-	groupsListBinding binding.StringList // 专门为群组列表提供数据
+	usersListBinding  binding.StringList
+	groupsListBinding binding.StringList
 
-	// 每个聊天标签页的数据源
 	chatHistories      map[string]binding.StringList
 	chatHistoriesMutex sync.Mutex
 }
@@ -36,7 +63,7 @@ type UI struct {
 // NewUI 创建并初始化UI
 func NewUI(app fyne.App, c *Client) *UI {
 	w := app.NewWindow("Go Chat")
-	w.SetMaster() // 设置为主窗口
+	w.SetMaster()
 
 	ui := &UI{
 		client:            c,
@@ -47,22 +74,16 @@ func NewUI(app fyne.App, c *Client) *UI {
 		groupsListBinding: binding.NewStringList(),
 	}
 
-	w.SetOnClosed(func() {
-		// 当主窗口关闭时，退出整个应用
-		app.Quit()
-	})
-
+	w.SetOnClosed(func() { app.Quit() })
 	return ui
 }
 
 // Run 启动并显示UI
 func (ui *UI) Run() {
-	// 初始界面就是登录界面
 	loginView := ui.createLoginView()
 	ui.window.SetContent(loginView)
-	ui.window.Resize(fyne.NewSize(400, 200)) // 登录窗口小一点
-
-	// ShowAndRun会阻塞，直到app.Quit()被调用
+	ui.window.Resize(fyne.NewSize(400, 200))
+	ui.window.CenterOnScreen()
 	ui.window.ShowAndRun()
 }
 
@@ -71,8 +92,7 @@ func (ui *UI) createLoginView() fyne.CanvasObject {
 	usernameEntry := widget.NewEntry()
 	usernameEntry.SetPlaceHolder("输入用户名")
 	statusLabel := widget.NewLabel("")
-
-	var loginButton *widget.Button // 先声明变量
+	var loginButton *widget.Button
 
 	loginButton = widget.NewButton("登录", func() {
 		username := usernameEntry.Text
@@ -81,15 +101,11 @@ func (ui *UI) createLoginView() fyne.CanvasObject {
 			return
 		}
 
-		// 禁用登录按钮，防止重复点击
 		loginButton.Disable()
 		statusLabel.SetText("正在连接服务器...")
 
-		// 在后台处理连接
 		go func() {
-			// 连接服务器
 			if err := ui.client.Connect("127.0.0.1:8080"); err != nil {
-				// 连接失败，回到主线程更新UI
 				fyne.Do(func() {
 					dialog.ShowError(err, ui.window)
 					loginButton.Enable()
@@ -98,31 +114,8 @@ func (ui *UI) createLoginView() fyne.CanvasObject {
 				return
 			}
 
-			fmt.Println("服务器连接成功")
-
-			// 设置用户名
-			ui.client.SetUsername(username)
-			ui.username = username
-
-			// 重要：先启动客户端循环，确保有goroutine处理outgoing通道
-			ui.client.Start()
-
-			// 构造登录消息
-			loginMsg := protocol.Message{
-				Type:   protocol.LoginRequest,
-				Sender: username,
-			}
-
-			fmt.Println("发送登录消息:", username)
-			// 发送登录消息 - 这个方法不返回错误
-			ui.client.Send(loginMsg)
-
-			// 启动后台任务监听服务器消息
-			ui.startBackgroundTasks()
-
-			// 在UI线程切换界面
 			fyne.Do(func() {
-				ui.prepareAndShowChatView()
+				ui.switchToChatView(username)
 			})
 		}()
 	})
@@ -135,51 +128,149 @@ func (ui *UI) createLoginView() fyne.CanvasObject {
 	))
 }
 
-// 新增：将UI切换逻辑与网络操作分离
-func (ui *UI) prepareAndShowChatView() {
-	// 准备UI元素
+// switchToChatView 负责创建主聊天界面
+func (ui *UI) switchToChatView(username string) {
+	ui.username = username
+	ui.client.SetUsername(username)
+	ui.window.SetTitle(fmt.Sprintf("Go Chat - %s", ui.username))
+
 	ui.accordion = ui.createAccordion()
 	createGroupBtn := widget.NewButton("创建群组", ui.showCreateGroupDialog)
 	leftPanel := container.NewBorder(nil, createGroupBtn, nil, nil, ui.accordion)
 
-	ui.chatTabs = container.NewAppTabs()
+	// --- 变化点：使用 NewDocTabs ---
+	ui.chatTabs = container.NewDocTabs()
+	// 设置当任何标签页被关闭时的回调
+	ui.chatTabs.OnClosed = func(item *container.TabItem) {
+		name := item.Text
+		fmt.Printf("标签页 '%s' 已关闭\n", name)
+
+		// 清理聊天记录
+		ui.chatHistoriesMutex.Lock()
+		delete(ui.chatHistories, name)
+		ui.chatHistoriesMutex.Unlock()
+
+		// 如果是群聊，发送离开群组的请求
+		if ui.isGroup(name) {
+			leaveMsg := protocol.Message{
+				Type:      protocol.LeaveGroupRequest,
+				Sender:    ui.username,
+				GroupName: name,
+			}
+			ui.client.Send(leaveMsg)
+		}
+	}
 	ui.openChatTab("世界大厅")
 
 	split := container.NewHSplit(leftPanel, ui.chatTabs)
 	split.SetOffset(0.25)
 
-	// 先改变窗口大小
+	ui.window.SetContent(split)
 	ui.window.Resize(fyne.NewSize(900, 600))
 
-	// 再设置内容
-	ui.window.SetContent(split)
+	ui.client.Start()
+	ui.startBackgroundTasks()
 
-	// 最后居中和设置标题
-	ui.window.SetTitle(fmt.Sprintf("Go Chat - %s", ui.username))
+	loginMsg := protocol.Message{Type: protocol.LoginRequest, Sender: ui.username}
+	ui.client.Send(loginMsg)
 }
 
-// createAccordion 创建并返回一个手风琴布局
+// openChatTab 确保一个聊天标签页被创建并选中
+func (ui *UI) openChatTab(name string) {
+	// 检查标签页是否已存在。如果存在，只需选中它并返回。
+	for _, tab := range ui.chatTabs.Items {
+		if tab.Text == name {
+			ui.chatTabs.Select(tab)
+			return
+		}
+	}
+
+	// 如果标签页不存在，则创建它的内容。
+	content := ui.createChatTabContent(name)
+	newTab := container.NewTabItem(name, content)
+
+	// 将新标签页添加到容器中。
+	ui.chatTabs.Append(newTab)
+
+	// TODO关键：对“世界大厅”应用特殊规则。
+	// if name == "世界大厅" {
+	// 	// 使用 DocTabs 的 SetTabClosable 方法来使其不可关闭。
+	// 	ui.chatTabs.SetTabClosable(newTab, false)
+	// }
+
+	// 确保新创建的标签页被选中，显示在前台。
+	ui.chatTabs.Select(newTab)
+}
+
+// createChatTabContent 创建一个聊天标签页的内容
+func (ui *UI) createChatTabContent(name string) fyne.CanvasObject {
+	historyBinding := binding.NewStringList()
+	ui.chatHistoriesMutex.Lock()
+	ui.chatHistories[name] = historyBinding
+	ui.chatHistoriesMutex.Unlock()
+
+	historyList := widget.NewListWithData(historyBinding,
+		// CreateItem: 创建列表项的模板
+		func() fyne.CanvasObject {
+			label := widget.NewLabel("template")
+			label.Wrapping = fyne.TextWrapWord // 设置文本换行模式
+			return label
+		},
+		// UpdateItem: 将数据绑定到模板
+		func(i binding.DataItem, o fyne.CanvasObject) {
+			o.(*widget.Label).Bind(i.(binding.String))
+		},
+	)
+
+	input := newCustomEntry(ui.app)
+	input.SetPlaceHolder("在这里输入消息...")
+
+	sendBtn := widget.NewButton("发送", func() {
+		if input.Text == "" {
+			return
+		}
+		var msgType, recipient, groupName string
+		if name == "世界大厅" {
+			msgType = protocol.BroadcastMessage
+		} else if ui.isGroup(name) {
+			msgType = protocol.GroupMessage
+			groupName = name
+		} else {
+			msgType = protocol.PrivateMessage
+			recipient = name
+		}
+		ui.client.SendChatMessage(msgType, recipient, groupName, input.Text)
+		input.SetText("")
+	})
+	fileBtn := widget.NewButtonWithIcon("", theme.FileIcon(), func() {
+		// 这里的 name 就是当前聊天页的名称 (对方用户名或群名)
+		ui.showFileOpenDialog(name)
+	})
+	inputBox := container.NewBorder(nil, nil, nil, container.NewHBox(sendBtn, fileBtn), input)
+	input.OnSubmitted = func(_ string) { sendBtn.OnTapped() }
+
+	return container.NewBorder(nil, inputBox, nil, nil, historyList)
+}
+
 func (ui *UI) createAccordion() *widget.Accordion {
-	// --- 创建用户列表 ---
 	usersList := widget.NewListWithData(ui.usersListBinding,
 		func() fyne.CanvasObject { return widget.NewLabel("") },
 		func(i binding.DataItem, o fyne.CanvasObject) { o.(*widget.Label).Bind(i.(binding.String)) },
 	)
 	usersList.OnSelected = func(id widget.ListItemID) {
-		// 当用户被选中时，可以发起私聊
-		username, _ := ui.usersListBinding.GetValue(id)
-		fmt.Printf("准备与 %s 私聊...\n", username)
-		usersList.Unselect(id) // 取消选中状态
-		ui.openChatTab(username)
+		selectedUsername, _ := ui.usersListBinding.GetValue(id)
+		usersList.Unselect(id)
+		fmt.Printf("准备与 %s 私聊...\n", selectedUsername)
+		ui.openChatTab(selectedUsername)
 	}
 
-	// --- 创建群组列表 ---
 	groupsList := widget.NewListWithData(ui.groupsListBinding,
 		func() fyne.CanvasObject { return widget.NewLabel("") },
 		func(i binding.DataItem, o fyne.CanvasObject) { o.(*widget.Label).Bind(i.(binding.String)) },
 	)
 	groupsList.OnSelected = func(id widget.ListItemID) {
 		groupName, _ := ui.groupsListBinding.GetValue(id)
+		groupsList.Unselect(id)
 		dialog.ShowConfirm("加入群组", fmt.Sprintf("您想加入群组 '%s' 吗？", groupName), func(join bool) {
 			if !join {
 				return
@@ -194,29 +285,20 @@ func (ui *UI) createAccordion() *widget.Accordion {
 		}, ui.window)
 	}
 
-	// --- 创建手风琴项目并组合 ---
 	userAccordionItem := widget.NewAccordionItem("在线用户", usersList)
 	groupAccordionItem := widget.NewAccordionItem("可用群组", groupsList)
-
-	// 创建手风琴，并默认打开“在线用户”
 	accordion := widget.NewAccordion(userAccordionItem, groupAccordionItem)
-	accordion.Open(0) // 索引为0的项，即用户列表
-
+	accordion.Open(0)
 	return accordion
 }
 
-// startBackgroundTasks 启动后台任务，处理来自服务器的消息
 func (ui *UI) startBackgroundTasks() {
-	fmt.Println("启动后台任务，开始监听服务器消息")
 	go func() {
 		for msg := range ui.client.GetIncomingMessages() {
-			// 为避免UI更新过于频繁导致卡顿，可以考虑批量更新
-			localMsg := msg // 创建局部变量避免闭包问题
-
+			localMsg := msg
 			fyne.Do(func() {
 				switch localMsg.Type {
 				case protocol.TreeUpdate:
-					// 更新用户列表
 					var otherUsers []string
 					for _, user := range localMsg.TreePayload.Users {
 						if user != ui.username {
@@ -225,7 +307,6 @@ func (ui *UI) startBackgroundTasks() {
 					}
 					ui.usersListBinding.Set(otherUsers)
 
-					// 更新群组列表
 					var groupNames []string
 					for name := range localMsg.TreePayload.Groups {
 						groupNames = append(groupNames, name)
@@ -234,28 +315,33 @@ func (ui *UI) startBackgroundTasks() {
 
 				case protocol.BroadcastMessage:
 					ui.addMessage("世界大厅", localMsg)
-
 				case protocol.GroupMessage:
 					ui.addMessage(localMsg.GroupName, localMsg)
-
 				case protocol.PrivateMessage:
-					// 判断这条私聊消息的“对话方”是谁
 					var conversationPartner string
-					if msg.Sender == ui.username {
-						// 如果我是发送者，那么对话方是接收者
-						conversationPartner = msg.Recipient
+					if localMsg.Sender == ui.username {
+						conversationPartner = localMsg.Recipient
 					} else {
-						// 如果我是接收者，那么对话方是发送者
-						conversationPartner = msg.Sender
+						conversationPartner = localMsg.Sender
 					}
-					// 将消息添加到以“对话方”命名的标签页中
-					ui.openChatTab(conversationPartner)
-					ui.addMessage(conversationPartner, msg)
+					ui.addMessage(conversationPartner, localMsg)
+				case protocol.PrivateFileMessage, protocol.GroupFileMessage:
+					// 收到文件消息，弹窗让用户确认
+					if localMsg.Sender != ui.username {
+						fileInfo := localMsg.FilePayload
+						dialog.ShowConfirm("接收文件",
+							fmt.Sprintf("来自 %s 的文件: %s (大小: %.2f KB)\n您想保存吗？",
+								localMsg.Sender, fileInfo.Name, float64(fileInfo.Size)/1024),
+							func(save bool) {
+								if !save {
+									return
+								}
+								ui.showFileSaveDialog(fileInfo, localMsg.GroupName, localMsg.Sender)
+							}, ui.window)
+					}
 				}
 			})
 		}
-
-		// 连接断开处理
 		fyne.Do(func() {
 			dialog.ShowInformation("连接断开", "您已与服务器断开连接。", ui.window)
 			ui.window.SetContent(ui.createLoginView())
@@ -264,9 +350,6 @@ func (ui *UI) startBackgroundTasks() {
 	}()
 }
 
-// --- UI 辅助函数 ---
-
-// showCreateGroupDialog 显示创建群组的对话框
 func (ui *UI) showCreateGroupDialog() {
 	entry := widget.NewEntry()
 	dialog.ShowForm("创建新群组", "创建", "取消", []*widget.FormItem{
@@ -275,94 +358,122 @@ func (ui *UI) showCreateGroupDialog() {
 		if !create || entry.Text == "" {
 			return
 		}
-		ui.client.SendChatMessage(protocol.CreateGroupRequest, "", entry.Text, "Create group: "+entry.Text)
+		ui.client.SendChatMessage(protocol.CreateGroupRequest, "", "", entry.Text)
 	}, ui.window)
 }
 
-func (ui *UI) openChatTab(name string) {
-	// 检查标签页是否已存在
-	for _, tab := range ui.chatTabs.Items {
-		if tab.Text == name {
-			ui.chatTabs.Select(tab)
-			return
-		}
-	}
-
-	// 如果不存在，创建新的聊天组件和数据源
-	historyBinding := binding.NewStringList()
-
-	// 将新的数据源存入map，以便 addMessage 函数可以找到它
-	ui.chatHistoriesMutex.Lock()
-	ui.chatHistories[name] = historyBinding
-	ui.chatHistoriesMutex.Unlock()
-
-	// --- 创建UI组件 ---
-	historyList := widget.NewListWithData(historyBinding,
-		func() fyne.CanvasObject { return widget.NewLabel("") },
-		func(i binding.DataItem, o fyne.CanvasObject) { o.(*widget.Label).Bind(i.(binding.String)) },
-	)
-	input := widget.NewEntry()
-	input.SetPlaceHolder("在这里输入消息...")
-
-	sendBtn := widget.NewButton("发送", func() {
-		if input.Text == "" {
-			return
-		}
-
-		msgType := protocol.BroadcastMessage
-		recipient := ""
-		groupName := ""
-
-		if name == "世界大厅" {
-			msgType = protocol.BroadcastMessage
-		} else if ui.isGroup(name) {
-			msgType = protocol.GroupMessage
-			groupName = name
-		} else {
-			msgType = protocol.PrivateMessage
-			recipient = name
-		}
-
-		ui.client.SendChatMessage(msgType, recipient, groupName, input.Text)
-		input.SetText("")
-	})
-	input.OnSubmitted = func(_ string) { sendBtn.OnTapped() }
-
-	chatContainer := container.NewBorder(nil, container.NewBorder(nil, nil, nil, sendBtn, input), nil, nil, historyList)
-
-	// 创建并添加新标签页
-	newTab := container.NewTabItem(name, chatContainer)
-	ui.chatTabs.Append(newTab)
-	ui.chatTabs.Select(newTab)
-}
-
-// addMessage 将消息添加到指定的标签页。
-// 如果标签页不存在，它会自动创建、添加并选中该标签页。
 func (ui *UI) addMessage(tabName string, msg protocol.Message) {
 	ui.chatHistoriesMutex.Lock()
 	history, ok := ui.chatHistories[tabName]
 	ui.chatHistoriesMutex.Unlock()
 
-	// 如果聊天记录的数据源不存在，说明UI上还没有这个标签页
 	if !ok {
-		// 自动创建并切换到这个UI标签页
 		ui.openChatTab(tabName)
-		// 再次获取，这次一定能拿到
 		ui.chatHistoriesMutex.Lock()
 		history = ui.chatHistories[tabName]
 		ui.chatHistoriesMutex.Unlock()
 	}
 
-	// 追加消息
-	timestampStr := msg.Timestamp.Format("15:04:05")
-	formattedMsg := fmt.Sprintf("[%s] %s: %s", timestampStr, msg.Sender, msg.TextPayload)
-	history.Append(formattedMsg)
+	if history != nil {
+		timestampStr := msg.Timestamp.Format("15:04:05")
+		formattedMsg := fmt.Sprintf("[%s] %s: %s", timestampStr, msg.Sender, msg.TextPayload)
+		history.Append(formattedMsg)
+	}
 }
 
 func (ui *UI) isGroup(name string) bool {
-	// 检查群组列表中是否存在该群组名
-	ui.chatHistoriesMutex.Lock()
-	defer ui.chatHistoriesMutex.Unlock()
-	_, exists := ui.chatHistories[name]
-	return exists
+	list, _ := ui.groupsListBinding.Get()
+	return slices.Contains(list, name)
+}
+
+// showFileOpenDialog 打开文件选择对话框并处理文件发送
+func (ui *UI) showFileOpenDialog(targetName string) {
+	dialog.ShowFileOpen(func(readCloser fyne.URIReadCloser, err error) {
+		if err != nil {
+			dialog.ShowError(err, ui.window)
+			return
+		}
+		if readCloser == nil {
+			return
+		} // 用户取消
+		defer readCloser.Close()
+
+		fileData, readErr := ioutil.ReadAll(readCloser)
+		if readErr != nil {
+			dialog.ShowError(readErr, ui.window)
+			return
+		}
+
+		encodedData := base64.StdEncoding.EncodeToString(fileData)
+		fileName := readCloser.URI().Name()
+		fileSize := int64(len(fileData))
+
+		var msgType, recipient, groupName string
+		if ui.isGroup(targetName) {
+			msgType = protocol.GroupFileMessage
+			groupName = targetName
+		} else {
+			msgType = protocol.PrivateFileMessage
+			recipient = targetName
+		}
+
+		fileMsg := protocol.Message{
+			Type:      msgType,
+			Sender:    ui.username,
+			Recipient: recipient,
+			GroupName: groupName,
+			FilePayload: protocol.FilePayload{
+				Name: fileName,
+				Size: fileSize,
+				Data: []byte(encodedData),
+			},
+		}
+		ui.client.Send(fileMsg)
+
+		systemMsg := protocol.Message{
+			Timestamp:   time.Now(),
+			Sender:      "系统",
+			TextPayload: fmt.Sprintf("您已向 %s 发送文件: %s", targetName, fileName),
+		}
+		ui.addMessage(targetName, systemMsg)
+
+	}, ui.window)
+}
+
+func (ui *UI) showFileSaveDialog(fileInfo protocol.FilePayload, tabName string, senderName string) {
+	saveDialog := dialog.NewFileSave(func(writeCloser fyne.URIWriteCloser, err error) {
+		if err != nil {
+			dialog.ShowError(err, ui.window)
+			return
+		}
+		if writeCloser == nil {
+			// 用户取消保存
+			return
+		}
+		defer writeCloser.Close()
+
+		// Base64解码
+		decodedData, decodeErr := base64.StdEncoding.DecodeString(string(fileInfo.Data))
+		if decodeErr != nil {
+			dialog.ShowError(decodeErr, ui.window)
+			return
+		}
+
+		// 写入文件
+		_, writeErr := writeCloser.Write(decodedData)
+		if writeErr != nil {
+			dialog.ShowError(writeErr, ui.window)
+		} else {
+			// 改进点 3 (接收方): 保存成功后在本地UI显示提示
+			systemMsg := protocol.Message{
+				Timestamp:   time.Now(),
+				Sender:      "系统",
+				TextPayload: fmt.Sprintf("已成功接收来自 %s 的文件: %s", senderName, fileInfo.Name),
+			}
+			ui.addMessage(tabName, systemMsg)
+		}
+
+	}, ui.window)
+	saveDialog.SetFileName(fileInfo.Name)
+	saveDialog.Show()
 }

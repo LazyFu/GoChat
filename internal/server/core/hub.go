@@ -90,7 +90,7 @@ func (h *Hub) handleJoinGroup(client *Client, groupName string) {
 	}
 	h.groupMu.Unlock() // 获取到group后即可解锁
 
-	group.AddClient(client) // AddClient内部有自己的锁，是安全的
+	group.AddClient(client)
 	fmt.Printf("客户端 %s 加入了群组 %s\n", client.Username, groupName)
 	h.broadcastPresence() // 广播最新状态
 }
@@ -112,12 +112,12 @@ func (h *Hub) handleLeaveGroup(client *Client, groupName string) {
 }
 
 func (h *Hub) handleForwardMessage(message *protocol.Message) {
-	if message.GroupName != "" {
+	switch message.Type {
+	case protocol.GroupMessage, protocol.GroupFileMessage:
 		h.sendGroupMessage(message)
-	} else if message.Recipient != "" {
+	case protocol.PrivateMessage, protocol.PrivateFileMessage:
 		h.sendPrivateMessage(message)
-	} else {
-		// 假设所有非私聊、非群聊的消息都是广播
+	case protocol.BroadcastMessage:
 		h.broadcastMessage(message)
 	}
 }

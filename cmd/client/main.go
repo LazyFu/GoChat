@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	fyneApp := app.New()
+	fyneApp := app.NewWithID("io.github.lazyfu.chattool")
 	coreClient := client.NewClient()
 	gui := client.NewUI(fyneApp, coreClient)
 	gui.Run()

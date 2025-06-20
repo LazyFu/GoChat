@@ -29,7 +29,7 @@ func NewClient(hub *Hub, conn net.Conn) *Client {
 	}
 }
 
-// ReadPump 负责从客户端读取数据并交给 Hub 处理
+// ReadPump 负责从客户端读取数据并智能地分发到Hub的不同通道
 func (c *Client) ReadPump() {
 	defer func() {
 		c.hub.Unregister <- c
@@ -37,9 +37,10 @@ func (c *Client) ReadPump() {
 	}()
 
 	reader := bufio.NewReader(c.conn)
-	for { // 这个for循环必须是无限的，只有在网络错误时才break
-		c.conn.SetReadDeadline(time.Now().Add(120 * time.Second))
+	isRegistered := false
 
+	for {
+		c.conn.SetReadDeadline(time.Now().Add(120 * time.Second))
 		message, err := protocol.DecodeMessage(reader)
 		if err != nil {
 			fmt.Printf("读取客户端 %s (%s) 数据失败: %v\n", c.Username, c.ID, err)
@@ -48,18 +49,58 @@ func (c *Client) ReadPump() {
 
 		message.Timestamp = time.Now()
 
-		if c.Username == "" { // 处理首次登录消息
-			if message.Type == protocol.LoginRequest && message.Sender != "" {
-				c.Username = message.Sender
-				c.hub.Register <- c // 注册
-				// 注册后，这个分支就结束了，for循环会继续下一次迭代，等待聊天消息
-			} else {
-				fmt.Printf("警告: 来自 %s 的无效登录请求，连接已关闭。\n", c.conn.RemoteAddr())
-				break // 无效登录，退出循环
-			}
-		} else { // 处理已登录用户的后续消息
+		// 统一设置Sender，如果未登录则使用客户端上报的，否则使用服务器认证的
+		if c.Username != "" {
 			message.Sender = c.Username
-			c.hub.Forward <- message
+		}
+
+		// --- 核心：智能消息分发 switch ---
+		switch message.Type {
+
+		// --- 处理命令 ---
+		case protocol.LoginRequest:
+			if !isRegistered && message.Sender != "" {
+				fmt.Println("Login")
+				c.Username = message.Sender
+				c.hub.Register <- c
+				isRegistered = true
+			}
+
+		case protocol.CreateGroupRequest:
+			// "创建"命令，我们把它看作一种特殊的"加入"
+			fmt.Println("CreateGroup")
+			cmd := &GroupCommand{
+				Client:    c,
+				GroupName: message.TextPayload, // 群名在TextPayload中
+			}
+			c.hub.JoinGroup <- cmd
+
+		case protocol.JoinGroupRequest:
+			cmd := &GroupCommand{
+				Client:    c,
+				GroupName: message.GroupName,
+			}
+			c.hub.JoinGroup <- cmd
+
+		case protocol.LeaveGroupRequest:
+			cmd := &GroupCommand{
+				Client:    c,
+				GroupName: message.GroupName,
+			}
+			c.hub.LeaveGroup <- cmd
+
+		// --- 处理聊天消息 ---
+		case protocol.BroadcastMessage, protocol.PrivateMessage, protocol.GroupMessage,
+			protocol.PrivateFileMessage, protocol.GroupFileMessage:
+			// 只有真正的聊天消息，才进入Forward通道进行路由
+			if isRegistered {
+				c.hub.Forward <- message
+			} else {
+				fmt.Printf("警告: 客户端 %s 在未登录时尝试发送聊天消息。\n", c.ID)
+			}
+
+		default:
+			fmt.Printf("警告: 收到未知的消息类型: '%s'\n", message.Type)
 		}
 	}
 }
