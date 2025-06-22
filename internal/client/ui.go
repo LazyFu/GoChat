@@ -89,15 +89,26 @@ func (ui *UI) Run() {
 
 // createLoginView 创建登录视图
 func (ui *UI) createLoginView() fyne.CanvasObject {
+	serverAddrEntry := widget.NewEntry()
+	serverAddrEntry.SetPlaceHolder("输入服务器地址，如: 192.168.1.10:8080")
 	usernameEntry := widget.NewEntry()
 	usernameEntry.SetPlaceHolder("输入用户名")
 	statusLabel := widget.NewLabel("")
-	var loginButton *widget.Button
 
+	var loginButton *widget.Button
 	loginButton = widget.NewButton("登录", func() {
 		username := usernameEntry.Text
+		server := serverAddrEntry.Text // 获取服务器地址
+
+		// 校验用户名
 		if username == "" {
 			dialog.ShowError(fmt.Errorf("用户名不能为空"), ui.window)
+			return
+		}
+
+		// 校验服务器地址
+		if server == "" {
+			dialog.ShowError(fmt.Errorf("服务器地址不能为空"), ui.window)
 			return
 		}
 
@@ -105,7 +116,7 @@ func (ui *UI) createLoginView() fyne.CanvasObject {
 		statusLabel.SetText("正在连接服务器...")
 
 		go func() {
-			if err := ui.client.Connect("127.0.0.1:8080"); err != nil {
+			if err := ui.client.Connect(server); err != nil {
 				fyne.Do(func() {
 					dialog.ShowError(err, ui.window)
 					loginButton.Enable()
@@ -122,6 +133,7 @@ func (ui *UI) createLoginView() fyne.CanvasObject {
 
 	return container.NewCenter(container.NewVBox(
 		widget.NewLabel("欢迎来到聊天室"),
+		serverAddrEntry,
 		usernameEntry,
 		loginButton,
 		statusLabel,
