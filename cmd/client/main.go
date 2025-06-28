@@ -1,7 +1,7 @@
 package main
 
 import (
-	"ChatTool/internal/client"
+	"GoChat/internal/client"
 	"fmt"
 
 	"fyne.io/fyne/v2/app"

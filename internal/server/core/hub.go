@@ -1,7 +1,7 @@
 package core
 
 import (
-	"ChatTool/pkg/protocol"
+	"GoChat/pkg/protocol"
 	"fmt"
 	"sync"
 )
@@ -57,7 +57,7 @@ func (h *Hub) handleRegister(client *Client) {
 	h.Clients[client.ID] = client
 	h.mu.Unlock()
 	fmt.Printf("客户端已注册: %s (Username: %s)\n", client.ID, client.Username)
-	h.broadcastPresence() 
+	h.broadcastPresence()
 }
 
 func (h *Hub) handleUnregister(client *Client) {
@@ -169,7 +169,7 @@ func (h *Hub) sendGroupMessage(message *protocol.Message) {
 	defer h.groupMu.RUnlock()
 
 	if group, ok := h.Groups[message.GroupName]; ok {
-		group.mu.RLock() 
+		group.mu.RLock()
 		defer group.mu.RUnlock()
 
 		for client := range group.Clients {

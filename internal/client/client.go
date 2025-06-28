@@ -1,7 +1,7 @@
 package client
 
 import (
-	"ChatTool/pkg/protocol"
+	"GoChat/pkg/protocol"
 	"bufio"
 	"context"
 	"encoding/base64"

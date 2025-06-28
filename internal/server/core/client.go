@@ -1,7 +1,7 @@
 package core
 
 import (
-	"ChatTool/pkg/protocol"
+	"GoChat/pkg/protocol"
 	"bufio"
 	"fmt"
 	"net"

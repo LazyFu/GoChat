@@ -1,7 +1,7 @@
 package transport
 
 import (
-	"ChatTool/internal/server/core"
+	"GoChat/internal/server/core"
 	"fmt"
 	"net"
 )

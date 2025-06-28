@@ -1,8 +1,8 @@
 package main
 
 import (
-	"ChatTool/internal/server/core"
-	"ChatTool/internal/server/transport"
+	"GoChat/internal/server/core"
+	"GoChat/internal/server/transport"
 	"fmt"
 	"log"
 )

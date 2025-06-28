@@ -1,7 +1,7 @@
 package client
 
 import (
-	"ChatTool/pkg/protocol"
+	"GoChat/pkg/protocol"
 	"fmt"
 	"slices"
 	"sync"
