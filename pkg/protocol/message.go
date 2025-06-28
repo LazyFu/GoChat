@@ -29,10 +29,9 @@ type TreePayload struct {
 type FilePayload struct {
 	Name string `json:"name"` // 文件名
 	Size int64  `json:"size"` // 文件大小
-	Data []byte `json:"data"` // 文件内容 (通常是Base64编码后的)
+	Data []byte `json:"data"` // 文件内容
 }
 
-// Message represents a basic chat message structure.
 type Message struct {
 	Type      string    `json:"type"`      // 消息类型
 	Sender    string    `json:"sender"`    // 发送者

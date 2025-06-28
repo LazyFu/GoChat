@@ -10,7 +10,7 @@ import (
 func main() {
 	// 初始化 Hub
 	hub := core.NewHub()
-	go hub.Run() // 启动 Hub 的事件处理循环
+	go hub.Run()
 
 	// 创建 TCP 服务器
 	server := transport.NewServer("0.0.0.0", 8080, hub)

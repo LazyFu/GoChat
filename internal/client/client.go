@@ -4,14 +4,16 @@ import (
 	"ChatTool/pkg/protocol"
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"sync"
 )
 
 type Client struct {
-	username string        // 客户端唯一标识（如用户ID或连接地址）
+	username string        // 客户端唯一标识
 	conn     net.Conn      // TCP 连接
 	reader   *bufio.Reader // 用于读取数据的缓冲读取器
 	wg       sync.WaitGroup
@@ -43,7 +45,7 @@ func (c *Client) Connect(address string) error {
 }
 
 func (c *Client) Start() {
-	fmt.Println("Client.Start(): 启动 sendLoop 和 receiveLoop") // ✅
+	fmt.Println("Client.Start(): 启动 sendLoop 和 receiveLoop")
 	c.wg.Add(2)
 	go c.receiveLoop()
 	go c.sendLoop()
@@ -53,16 +55,16 @@ func (c *Client) Start() {
 func (c *Client) receiveLoop() {
 	defer c.wg.Done()
 	defer close(c.incoming)
-	fmt.Println("receiveLoop 开始等待消息") // ✅
+	fmt.Println("receiveLoop 开始等待消息")
 	for {
 		select {
 		case <-c.ctx.Done():
-			fmt.Println("receiveLoop 检测到 ctx.Done，退出") // ✅
+			fmt.Println("receiveLoop 检测到 ctx.Done，退出")
 			return
 		default:
 			message, err := protocol.DecodeMessage(c.reader)
 			if err != nil {
-				fmt.Println("receiveLoop 读取失败:", err) // ✅
+				fmt.Println("receiveLoop 读取失败:", err)
 				if err != io.EOF || isNetClosedErr(err) {
 					fmt.Println("Connection closed by server:", err)
 				}
@@ -70,7 +72,6 @@ func (c *Client) receiveLoop() {
 				return
 			}
 
-			// 增强日志，打印更多消息细节
 			if message.Type == protocol.TreeUpdate {
 				fmt.Printf("TreeUpdate收到: 用户数:%d, 群组数:%d\n",
 					len(message.TreePayload.Users),
@@ -84,6 +85,7 @@ func (c *Client) receiveLoop() {
 	}
 }
 
+// sendLoop 处理发送消息
 func (c *Client) sendLoop() {
 	defer c.wg.Done()
 	for {
@@ -109,7 +111,6 @@ func (c *Client) sendLoop() {
 	}
 }
 
-// SetUsername 设置该客户端的用户名
 func (c *Client) SetUsername(name string) {
 	c.username = name
 }
@@ -118,7 +119,7 @@ func (c *Client) SetUsername(name string) {
 func (c *Client) SendChatMessage(msgType, recipient, groupName, payload string) {
 	message := protocol.Message{
 		Type:        msgType,
-		Sender:      c.username, // <-- 使用自己保管的username
+		Sender:      c.username,
 		Recipient:   recipient,
 		GroupName:   groupName,
 		TextPayload: payload,
@@ -139,11 +140,10 @@ func (c *Client) GetIncomingMessages() <-chan protocol.Message {
 }
 
 func (c *Client) Close() {
-	c.cancel() // 取消上下文，通知所有 goroutine 停止
+	c.cancel()
 	if c.conn != nil {
-		c.conn.Close() // 关闭连接
+		c.conn.Close()
 	}
-	//c.wg.Wait() // 等待所有 goroutine 完成
 }
 
 func isNetClosedErr(err error) bool {
@@ -154,4 +154,51 @@ func isNetClosedErr(err error) bool {
 		return OpErr.Err.Error() == "use of closed network connection"
 	}
 	return err == net.ErrClosed || err == io.EOF
+}
+
+// SendFile 是一个专门处理文件发送逻辑的新方法
+func (c *Client) SendFile(msgType, recipient, groupName, filePath string) {
+	// 将文件读取和编码等耗时操作放入后台goroutine，防止阻塞UI
+	go func() {
+		fileData, err := os.ReadFile(filePath)
+		if err != nil {
+			fmt.Printf("错误：读取文件失败: %v\n", err)
+			// 可以在这里通过channel等方式通知UI发送失败
+			return
+		}
+
+		fileInfo, _ := os.Stat(filePath) // 获取文件名等信息
+		encodedData := base64.StdEncoding.EncodeToString(fileData)
+
+		fileMsg := protocol.Message{
+			Type:      msgType,
+			Sender:    c.username,
+			Recipient: recipient,
+			GroupName: groupName,
+			FilePayload: protocol.FilePayload{
+				Name: fileInfo.Name(),
+				Size: fileInfo.Size(),
+				Data: []byte(encodedData),
+			},
+		}
+		c.Send(fileMsg)
+	}()
+}
+
+// SaveFile 是一个处理文件保存
+func (c *Client) SaveFile(fileInfo protocol.FilePayload, savePath string) {
+	go func() {
+		decodedData, err := base64.StdEncoding.DecodeString(string(fileInfo.Data))
+		if err != nil {
+			fmt.Printf("错误：Base64解码失败: %v\n", err)
+			return
+		}
+
+		err = os.WriteFile(savePath, decodedData, 0644)
+		if err != nil {
+			fmt.Printf("错误：写入文件失败: %v\n", err)
+		} else {
+			fmt.Printf("文件 %s 已成功保存到 %s\n", fileInfo.Name, savePath)
+		}
+	}()
 }

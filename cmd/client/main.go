@@ -1,7 +1,7 @@
 package main
 
 import (
-	"ChatTool/internal/client" // 请确认您的模块名
+	"ChatTool/internal/client"
 	"fmt"
 
 	"fyne.io/fyne/v2/app"

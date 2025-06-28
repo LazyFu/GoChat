@@ -1,8 +1,14 @@
-# NOTE
+# Go Chat
 
->See `ChatTool/cmd/test/main.go`
->
->The wrong way is the right way. Do not use the `centerOnScreen` in fyne.Do.
+使用go开发的局域网聊天软件，支持一对一私聊，群聊，传文件。
+
+## 开始
+
+运行测试`go run ./cmd/client`，`go run ./cmd/server`
+
+## NOTE
+
+>Do not use the `centerOnScreen` in fyne.Do.
 
 ## Problems
 

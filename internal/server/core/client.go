@@ -12,7 +12,7 @@ import (
 
 // Client 表示一个连接的客户端
 type Client struct {
-	ID       string                // 客户端唯一标识（如用户ID或连接地址）
+	ID       string                // 客户端唯一标识
 	Username string                // 客户端用户名
 	Send     chan protocol.Message // 用于向客户端发送消息的通道
 	hub      *Hub                  // 指向中心枢纽的指针
@@ -49,15 +49,12 @@ func (c *Client) ReadPump() {
 
 		message.Timestamp = time.Now()
 
-		// 统一设置Sender，如果未登录则使用客户端上报的，否则使用服务器认证的
 		if c.Username != "" {
 			message.Sender = c.Username
 		}
 
-		// --- 核心：智能消息分发 switch ---
 		switch message.Type {
 
-		// --- 处理命令 ---
 		case protocol.LoginRequest:
 			if !isRegistered && message.Sender != "" {
 				fmt.Println("Login")
@@ -67,11 +64,10 @@ func (c *Client) ReadPump() {
 			}
 
 		case protocol.CreateGroupRequest:
-			// "创建"命令，我们把它看作一种特殊的"加入"
 			fmt.Println("CreateGroup")
 			cmd := &GroupCommand{
 				Client:    c,
-				GroupName: message.TextPayload, // 群名在TextPayload中
+				GroupName: message.TextPayload,
 			}
 			c.hub.JoinGroup <- cmd
 
@@ -89,10 +85,8 @@ func (c *Client) ReadPump() {
 			}
 			c.hub.LeaveGroup <- cmd
 
-		// --- 处理聊天消息 ---
 		case protocol.BroadcastMessage, protocol.PrivateMessage, protocol.GroupMessage,
 			protocol.PrivateFileMessage, protocol.GroupFileMessage:
-			// 只有真正的聊天消息，才进入Forward通道进行路由
 			if isRegistered {
 				c.hub.Forward <- message
 			} else {
@@ -115,7 +109,6 @@ func (c *Client) WritePump() {
 		// 设置写入超时
 		c.conn.SetWriteDeadline(time.Now().Add(60 * time.Second))
 
-		// 发送消息
 		frame, err := protocol.EncodeMessage(message)
 		if err != nil {
 			fmt.Printf("编码消息失败: %v\n", err)

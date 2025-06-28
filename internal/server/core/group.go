@@ -5,7 +5,7 @@ import "sync"
 type Group struct {
 	Name    string           // 群组名称
 	Clients map[*Client]bool // 成员列表
-	mu      sync.RWMutex     // 保护 Clients 的互斥锁
+	mu      sync.RWMutex
 }
 
 func NewGroup(name string) *Group {

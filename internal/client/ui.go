@@ -2,9 +2,7 @@ package client
 
 import (
 	"ChatTool/pkg/protocol"
-	"encoding/base64"
 	"fmt"
-	"io/ioutil"
 	"slices"
 	"sync"
 	"time"
@@ -38,12 +36,10 @@ func (e *customEntry) TappedSecondary(pe *fyne.PointEvent) {
 		e.SetText(e.Text + clipboard.Content())
 	})
 
-	// 创建并显示一个只包含“粘贴”的安全弹出菜单
 	menu := fyne.NewMenu("", pasteItem)
 	widget.ShowPopUpMenuAtPosition(menu, e.app.Driver().CanvasForObject(e), pe.AbsolutePosition)
 }
 
-// --- UI 结构体定义  ---
 type UI struct {
 	client *Client
 	app    fyne.App
@@ -90,7 +86,7 @@ func (ui *UI) Run() {
 // createLoginView 创建登录视图
 func (ui *UI) createLoginView() fyne.CanvasObject {
 	serverAddrEntry := widget.NewEntry()
-	serverAddrEntry.SetPlaceHolder("输入服务器地址，如: 192.168.1.10:8080")
+	serverAddrEntry.SetPlaceHolder("输入服务器地址，如: 127.0.0.1:8080")
 	usernameEntry := widget.NewEntry()
 	usernameEntry.SetPlaceHolder("输入用户名")
 	statusLabel := widget.NewLabel("")
@@ -98,7 +94,7 @@ func (ui *UI) createLoginView() fyne.CanvasObject {
 	var loginButton *widget.Button
 	loginButton = widget.NewButton("登录", func() {
 		username := usernameEntry.Text
-		server := serverAddrEntry.Text // 获取服务器地址
+		server := serverAddrEntry.Text
 
 		// 校验用户名
 		if username == "" {
@@ -150,19 +146,15 @@ func (ui *UI) switchToChatView(username string) {
 	createGroupBtn := widget.NewButton("创建群组", ui.showCreateGroupDialog)
 	leftPanel := container.NewBorder(nil, createGroupBtn, nil, nil, ui.accordion)
 
-	// --- 变化点：使用 NewDocTabs ---
 	ui.chatTabs = container.NewDocTabs()
-	// 设置当任何标签页被关闭时的回调
 	ui.chatTabs.OnClosed = func(item *container.TabItem) {
 		name := item.Text
 		fmt.Printf("标签页 '%s' 已关闭\n", name)
 
-		// 清理聊天记录
 		ui.chatHistoriesMutex.Lock()
 		delete(ui.chatHistories, name)
 		ui.chatHistoriesMutex.Unlock()
 
-		// 如果是群聊，发送离开群组的请求
 		if ui.isGroup(name) {
 			leaveMsg := protocol.Message{
 				Type:      protocol.LeaveGroupRequest,
@@ -189,7 +181,6 @@ func (ui *UI) switchToChatView(username string) {
 
 // openChatTab 确保一个聊天标签页被创建并选中
 func (ui *UI) openChatTab(name string) {
-	// 检查标签页是否已存在。如果存在，只需选中它并返回。
 	for _, tab := range ui.chatTabs.Items {
 		if tab.Text == name {
 			ui.chatTabs.Select(tab)
@@ -197,20 +188,16 @@ func (ui *UI) openChatTab(name string) {
 		}
 	}
 
-	// 如果标签页不存在，则创建它的内容。
 	content := ui.createChatTabContent(name)
 	newTab := container.NewTabItem(name, content)
-
-	// 将新标签页添加到容器中。
 	ui.chatTabs.Append(newTab)
 
-	// TODO关键：对“世界大厅”应用特殊规则。
+	// TODO:对“世界大厅”应用特殊规则。
 	// if name == "世界大厅" {
 	// 	// 使用 DocTabs 的 SetTabClosable 方法来使其不可关闭。
 	// 	ui.chatTabs.SetTabClosable(newTab, false)
 	// }
 
-	// 确保新创建的标签页被选中，显示在前台。
 	ui.chatTabs.Select(newTab)
 }
 
@@ -222,13 +209,11 @@ func (ui *UI) createChatTabContent(name string) fyne.CanvasObject {
 	ui.chatHistoriesMutex.Unlock()
 
 	historyList := widget.NewListWithData(historyBinding,
-		// CreateItem: 创建列表项的模板
 		func() fyne.CanvasObject {
 			label := widget.NewLabel("template")
-			label.Wrapping = fyne.TextWrapWord // 设置文本换行模式
+			label.Wrapping = fyne.TextWrapWord
 			return label
 		},
-		// UpdateItem: 将数据绑定到模板
 		func(i binding.DataItem, o fyne.CanvasObject) {
 			o.(*widget.Label).Bind(i.(binding.String))
 		},
@@ -255,7 +240,6 @@ func (ui *UI) createChatTabContent(name string) fyne.CanvasObject {
 		input.SetText("")
 	})
 	fileBtn := widget.NewButtonWithIcon("", theme.FileIcon(), func() {
-		// 这里的 name 就是当前聊天页的名称 (对方用户名或群名)
 		ui.showFileOpenDialog(name)
 	})
 	inputBox := container.NewBorder(nil, nil, nil, container.NewHBox(sendBtn, fileBtn), input)
@@ -338,7 +322,6 @@ func (ui *UI) startBackgroundTasks() {
 					}
 					ui.addMessage(conversationPartner, localMsg)
 				case protocol.PrivateFileMessage, protocol.GroupFileMessage:
-					// 收到文件消息，弹窗让用户确认
 					if localMsg.Sender != ui.username {
 						fileInfo := localMsg.FilePayload
 						dialog.ShowConfirm("接收文件",
@@ -398,7 +381,6 @@ func (ui *UI) isGroup(name string) bool {
 	return slices.Contains(list, name)
 }
 
-// showFileOpenDialog 打开文件选择对话框并处理文件发送
 func (ui *UI) showFileOpenDialog(targetName string) {
 	dialog.ShowFileOpen(func(readCloser fyne.URIReadCloser, err error) {
 		if err != nil {
@@ -407,45 +389,23 @@ func (ui *UI) showFileOpenDialog(targetName string) {
 		}
 		if readCloser == nil {
 			return
-		} // 用户取消
-		defer readCloser.Close()
-
-		fileData, readErr := ioutil.ReadAll(readCloser)
-		if readErr != nil {
-			dialog.ShowError(readErr, ui.window)
-			return
 		}
 
-		encodedData := base64.StdEncoding.EncodeToString(fileData)
-		fileName := readCloser.URI().Name()
-		fileSize := int64(len(fileData))
+		filePath := readCloser.URI().Path()
 
-		var msgType, recipient, groupName string
+		var msgType string
 		if ui.isGroup(targetName) {
 			msgType = protocol.GroupFileMessage
-			groupName = targetName
 		} else {
 			msgType = protocol.PrivateFileMessage
-			recipient = targetName
 		}
 
-		fileMsg := protocol.Message{
-			Type:      msgType,
-			Sender:    ui.username,
-			Recipient: recipient,
-			GroupName: groupName,
-			FilePayload: protocol.FilePayload{
-				Name: fileName,
-				Size: fileSize,
-				Data: []byte(encodedData),
-			},
-		}
-		ui.client.Send(fileMsg)
+		ui.client.SendFile(msgType, targetName, targetName, filePath)
 
 		systemMsg := protocol.Message{
 			Timestamp:   time.Now(),
 			Sender:      "系统",
-			TextPayload: fmt.Sprintf("您已向 %s 发送文件: %s", targetName, fileName),
+			TextPayload: fmt.Sprintf("正在向 %s 发送文件: %s...", targetName, readCloser.URI().Name()),
 		}
 		ui.addMessage(targetName, systemMsg)
 
@@ -459,33 +419,22 @@ func (ui *UI) showFileSaveDialog(fileInfo protocol.FilePayload, tabName string, 
 			return
 		}
 		if writeCloser == nil {
-			// 用户取消保存
-			return
-		}
-		defer writeCloser.Close()
-
-		// Base64解码
-		decodedData, decodeErr := base64.StdEncoding.DecodeString(string(fileInfo.Data))
-		if decodeErr != nil {
-			dialog.ShowError(decodeErr, ui.window)
 			return
 		}
 
-		// 写入文件
-		_, writeErr := writeCloser.Write(decodedData)
-		if writeErr != nil {
-			dialog.ShowError(writeErr, ui.window)
-		} else {
-			// 改进点 3 (接收方): 保存成功后在本地UI显示提示
-			systemMsg := protocol.Message{
-				Timestamp:   time.Now(),
-				Sender:      "系统",
-				TextPayload: fmt.Sprintf("已成功接收来自 %s 的文件: %s", senderName, fileInfo.Name),
-			}
-			ui.addMessage(tabName, systemMsg)
+		savePath := writeCloser.URI().Path()
+		_ = writeCloser.Close()
+		ui.client.SaveFile(fileInfo, savePath)
+
+		systemMsg := protocol.Message{
+			Timestamp:   time.Now(),
+			Sender:      "系统",
+			TextPayload: fmt.Sprintf("正在保存来自 %s 的文件: %s...", senderName, fileInfo.Name),
 		}
+		ui.addMessage(tabName, systemMsg)
 
 	}, ui.window)
+
 	saveDialog.SetFileName(fileInfo.Name)
 	saveDialog.Show()
 }
