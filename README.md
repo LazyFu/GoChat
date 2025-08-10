@@ -6,6 +6,8 @@
 
 运行测试`go run ./cmd/client`，`go run ./cmd/server`
 
+在release中下载exe, 适用于x64 windows, 先运行server, 再运行client, 在client界面中输入运行server的设备IP, 8080端口, 例如`127.0.0.1:8080`.
+
 ## NOTE
 
 >Do not use the `centerOnScreen` in fyne.Do.
