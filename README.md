@@ -8,6 +8,14 @@
 
 在release中下载exe, 适用于x64 windows, 先运行server, 再运行client, 在client界面中输入运行server的设备IP, 8080端口, 例如`127.0.0.1:8080`.
 
+## 界面
+
+![login window](./assets/images/login.png)
+![private chat](./assets/images/private_chat.png)
+![world chat](./assets/images/world_chat.png)
+![send file](./assets/images/send_file.png)
+![receive file](./assets/images/receive_file.png)
+
 ## NOTE
 
 >Do not use the `centerOnScreen` in fyne.Do.
