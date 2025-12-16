@@ -3,7 +3,6 @@ package client
 import (
 	"GoChat/pkg/protocol"
 	"fmt"
-	"slices"
 	"sync"
 	"time"
 
@@ -48,9 +47,8 @@ type UI struct {
 	accordion *widget.Accordion
 	chatTabs  *container.DocTabs
 
-	username          string
-	usersListBinding  binding.StringList
-	groupsListBinding binding.StringList
+	username         string
+	usersListBinding binding.StringList
 
 	chatHistories      map[string]binding.StringList
 	chatHistoriesMutex sync.Mutex
@@ -62,12 +60,11 @@ func NewUI(app fyne.App, c *Client) *UI {
 	w.SetMaster()
 
 	ui := &UI{
-		client:            c,
-		app:               app,
-		window:            w,
-		chatHistories:     make(map[string]binding.StringList),
-		usersListBinding:  binding.NewStringList(),
-		groupsListBinding: binding.NewStringList(),
+		client:           c,
+		app:              app,
+		window:           w,
+		chatHistories:    make(map[string]binding.StringList),
+		usersListBinding: binding.NewStringList(),
 	}
 
 	w.SetOnClosed(func() { app.Quit() })
@@ -143,9 +140,7 @@ func (ui *UI) switchToChatView(username string) {
 	ui.window.SetTitle(fmt.Sprintf("Go Chat - %s", ui.username))
 
 	ui.accordion = ui.createAccordion()
-	createGroupBtn := widget.NewButton("创建群组", ui.showCreateGroupDialog)
-	leftPanel := container.NewBorder(nil, createGroupBtn, nil, nil, ui.accordion)
-
+	leftPanel := container.NewBorder(nil, nil, nil, nil, ui.accordion)
 	ui.chatTabs = container.NewDocTabs()
 	ui.chatTabs.OnClosed = func(item *container.TabItem) {
 		name := item.Text
@@ -154,15 +149,6 @@ func (ui *UI) switchToChatView(username string) {
 		ui.chatHistoriesMutex.Lock()
 		delete(ui.chatHistories, name)
 		ui.chatHistoriesMutex.Unlock()
-
-		if ui.isGroup(name) {
-			leaveMsg := protocol.Message{
-				Type:      protocol.LeaveGroupRequest,
-				Sender:    ui.username,
-				GroupName: name,
-			}
-			ui.client.Send(leaveMsg)
-		}
 	}
 	ui.openChatTab("世界大厅")
 
@@ -226,17 +212,14 @@ func (ui *UI) createChatTabContent(name string) fyne.CanvasObject {
 		if input.Text == "" {
 			return
 		}
-		var msgType, recipient, groupName string
+		var msgType, recipient string
 		if name == "世界大厅" {
 			msgType = protocol.BroadcastMessage
-		} else if ui.isGroup(name) {
-			msgType = protocol.GroupMessage
-			groupName = name
 		} else {
 			msgType = protocol.PrivateMessage
 			recipient = name
 		}
-		ui.client.SendChatMessage(msgType, recipient, groupName, input.Text)
+		ui.client.SendChatMessage(msgType, recipient, input.Text)
 		input.SetText("")
 	})
 	fileBtn := widget.NewButtonWithIcon("", theme.FileIcon(), func() {
@@ -260,30 +243,8 @@ func (ui *UI) createAccordion() *widget.Accordion {
 		ui.openChatTab(selectedUsername)
 	}
 
-	groupsList := widget.NewListWithData(ui.groupsListBinding,
-		func() fyne.CanvasObject { return widget.NewLabel("") },
-		func(i binding.DataItem, o fyne.CanvasObject) { o.(*widget.Label).Bind(i.(binding.String)) },
-	)
-	groupsList.OnSelected = func(id widget.ListItemID) {
-		groupName, _ := ui.groupsListBinding.GetValue(id)
-		groupsList.Unselect(id)
-		dialog.ShowConfirm("加入群组", fmt.Sprintf("您想加入群组 '%s' 吗？", groupName), func(join bool) {
-			if !join {
-				return
-			}
-			joinMsg := protocol.Message{
-				Type:      protocol.JoinGroupRequest,
-				Sender:    ui.username,
-				GroupName: groupName,
-			}
-			ui.client.Send(joinMsg)
-			ui.openChatTab(groupName)
-		}, ui.window)
-	}
-
 	userAccordionItem := widget.NewAccordionItem("在线用户", usersList)
-	groupAccordionItem := widget.NewAccordionItem("可用群组", groupsList)
-	accordion := widget.NewAccordion(userAccordionItem, groupAccordionItem)
+	accordion := widget.NewAccordion(userAccordionItem)
 	accordion.Open(0)
 	return accordion
 }
@@ -303,16 +264,9 @@ func (ui *UI) startBackgroundTasks() {
 					}
 					ui.usersListBinding.Set(otherUsers)
 
-					var groupNames []string
-					for name := range localMsg.TreePayload.Groups {
-						groupNames = append(groupNames, name)
-					}
-					ui.groupsListBinding.Set(groupNames)
-
 				case protocol.BroadcastMessage:
 					ui.addMessage("世界大厅", localMsg)
-				case protocol.GroupMessage:
-					ui.addMessage(localMsg.GroupName, localMsg)
+
 				case protocol.PrivateMessage:
 					var conversationPartner string
 					if localMsg.Sender == ui.username {
@@ -321,7 +275,7 @@ func (ui *UI) startBackgroundTasks() {
 						conversationPartner = localMsg.Sender
 					}
 					ui.addMessage(conversationPartner, localMsg)
-				case protocol.PrivateFileMessage, protocol.GroupFileMessage:
+				case protocol.PrivateFileMessage:
 					if localMsg.Sender != ui.username {
 						fileInfo := localMsg.FilePayload
 						dialog.ShowConfirm("接收文件",
@@ -331,7 +285,7 @@ func (ui *UI) startBackgroundTasks() {
 								if !save {
 									return
 								}
-								ui.showFileSaveDialog(fileInfo, localMsg.GroupName, localMsg.Sender)
+								ui.showFileSaveDialog(fileInfo, localMsg.Recipient, localMsg.Sender)
 							}, ui.window)
 					}
 				}
@@ -343,18 +297,6 @@ func (ui *UI) startBackgroundTasks() {
 			ui.window.Resize(fyne.NewSize(400, 200))
 		})
 	}()
-}
-
-func (ui *UI) showCreateGroupDialog() {
-	entry := widget.NewEntry()
-	dialog.ShowForm("创建新群组", "创建", "取消", []*widget.FormItem{
-		widget.NewFormItem("群组名", entry),
-	}, func(create bool) {
-		if !create || entry.Text == "" {
-			return
-		}
-		ui.client.SendChatMessage(protocol.CreateGroupRequest, "", "", entry.Text)
-	}, ui.window)
 }
 
 func (ui *UI) addMessage(tabName string, msg protocol.Message) {
@@ -376,11 +318,6 @@ func (ui *UI) addMessage(tabName string, msg protocol.Message) {
 	}
 }
 
-func (ui *UI) isGroup(name string) bool {
-	list, _ := ui.groupsListBinding.Get()
-	return slices.Contains(list, name)
-}
-
 func (ui *UI) showFileOpenDialog(targetName string) {
 	dialog.ShowFileOpen(func(readCloser fyne.URIReadCloser, err error) {
 		if err != nil {
@@ -393,14 +330,9 @@ func (ui *UI) showFileOpenDialog(targetName string) {
 
 		filePath := readCloser.URI().Path()
 
-		var msgType string
-		if ui.isGroup(targetName) {
-			msgType = protocol.GroupFileMessage
-		} else {
-			msgType = protocol.PrivateFileMessage
-		}
+		var msgType = protocol.PrivateFileMessage
 
-		ui.client.SendFile(msgType, targetName, targetName, filePath)
+		ui.client.SendFile(msgType, targetName, filePath)
 
 		systemMsg := protocol.Message{
 			Timestamp:   time.Now(),

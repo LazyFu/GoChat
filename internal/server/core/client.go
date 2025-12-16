@@ -63,30 +63,7 @@ func (c *Client) ReadPump() {
 				isRegistered = true
 			}
 
-		case protocol.CreateGroupRequest:
-			fmt.Println("CreateGroup")
-			cmd := &GroupCommand{
-				Client:    c,
-				GroupName: message.TextPayload,
-			}
-			c.hub.JoinGroup <- cmd
-
-		case protocol.JoinGroupRequest:
-			cmd := &GroupCommand{
-				Client:    c,
-				GroupName: message.GroupName,
-			}
-			c.hub.JoinGroup <- cmd
-
-		case protocol.LeaveGroupRequest:
-			cmd := &GroupCommand{
-				Client:    c,
-				GroupName: message.GroupName,
-			}
-			c.hub.LeaveGroup <- cmd
-
-		case protocol.BroadcastMessage, protocol.PrivateMessage, protocol.GroupMessage,
-			protocol.PrivateFileMessage, protocol.GroupFileMessage:
+		case protocol.BroadcastMessage, protocol.PrivateMessage, protocol.PrivateFileMessage:
 			if isRegistered {
 				c.hub.Forward <- message
 			} else {

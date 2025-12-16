@@ -7,23 +7,17 @@ import (
 
 // 定义消息类型常量
 const (
-	LoginRequest       = "cmd_login"
-	CreateGroupRequest = "cmd_create_group"
-	JoinGroupRequest   = "cmd_join_group"
-	LeaveGroupRequest  = "cmd_leave_group"
+	LoginRequest = "cmd_login"
 
 	// --- 数据/通知类型 ---
 	TreeUpdate         = "data_tree_update" // 树状列表更新
 	BroadcastMessage   = "msg_broadcast"    // 广播消息
 	PrivateMessage     = "msg_private"      // 私聊消息
-	GroupMessage       = "msg_group"        // 群聊消息
 	PrivateFileMessage = "file_private"     // 私聊文件
-	GroupFileMessage   = "file_group"       // 群聊文件
 )
 
 type TreePayload struct {
-	Users  []string            `json:"users"`  // 在线用户列表
-	Groups map[string][]string `json:"groups"` // 群组列表，键为群组名，值为成员列表
+	Users []string `json:"users"` // 在线用户列表
 }
 
 type FilePayload struct {
@@ -38,7 +32,6 @@ type Message struct {
 	Timestamp time.Time `json:"timestamp"` // 时间戳
 
 	Recipient   string      `json:"recipient,omitempty"`    // 接收者
-	GroupName   string      `json:"groupname,omitempty"`    // 群组名称
 	TextPayload string      `json:"text_payload,omitempty"` // 文本内容
 	FilePayload FilePayload `json:"file_payload"`           // 文件内容
 	TreePayload TreePayload `json:"tree_payload,omitempty"` // 树状结构数据

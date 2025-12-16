@@ -73,11 +73,10 @@ func (c *Client) receiveLoop() {
 			}
 
 			if message.Type == protocol.TreeUpdate {
-				fmt.Printf("TreeUpdate收到: 用户数:%d, 群组数:%d\n",
-					len(message.TreePayload.Users),
-					len(message.TreePayload.Groups))
+				fmt.Printf("TreeUpdate收到: 用户数:%d\n",
+					len(message.TreePayload.Users))
 			} else {
-				fmt.Println("receiveLoop 收到消息:", message.Type) // ✅
+				fmt.Println("receiveLoop 收到消息:", message.Type)
 			}
 
 			c.incoming <- *message
@@ -116,12 +115,11 @@ func (c *Client) SetUsername(name string) {
 }
 
 // SendChatMessage 是一个更高级的发送函数
-func (c *Client) SendChatMessage(msgType, recipient, groupName, payload string) {
+func (c *Client) SendChatMessage(msgType, recipient, payload string) {
 	message := protocol.Message{
 		Type:        msgType,
 		Sender:      c.username,
 		Recipient:   recipient,
-		GroupName:   groupName,
 		TextPayload: payload,
 	}
 	c.Send(message)
@@ -157,7 +155,7 @@ func isNetClosedErr(err error) bool {
 }
 
 // SendFile 是一个专门处理文件发送逻辑的新方法
-func (c *Client) SendFile(msgType, recipient, groupName, filePath string) {
+func (c *Client) SendFile(msgType, recipient, filePath string) {
 	// 将文件读取和编码等耗时操作放入后台goroutine，防止阻塞UI
 	go func() {
 		fileData, err := os.ReadFile(filePath)
@@ -174,7 +172,6 @@ func (c *Client) SendFile(msgType, recipient, groupName, filePath string) {
 			Type:      msgType,
 			Sender:    c.username,
 			Recipient: recipient,
-			GroupName: groupName,
 			FilePayload: protocol.FilePayload{
 				Name: fileInfo.Name(),
 				Size: fileInfo.Size(),
