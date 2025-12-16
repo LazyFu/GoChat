@@ -1,10 +1,12 @@
 package client
 
 import (
+	chatcrypto "GoChat/internal/crypto"
 	"GoChat/pkg/protocol"
 	"bufio"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,25 +14,127 @@ import (
 	"sync"
 )
 
+const defaultKey = "lUSzV7dxbkJaUNBSZ2e7cpcG4ZNmvgcJT6oPcli4rls=" // 32 bytes for AES-256 demo
+
 type Client struct {
-	username string        // 客户端唯一标识
-	conn     net.Conn      // TCP 连接
-	reader   *bufio.Reader // 用于读取数据的缓冲读取器
-	wg       sync.WaitGroup
-	ctx      context.Context
-	cancel   context.CancelFunc    // 用于取消上下文
-	incoming chan protocol.Message // 用于接收来自 Hub 的消息
-	outgoing chan protocol.Message // 用于发送消息到 Hub
+	username          string        // 客户端唯一标识j
+	conn              net.Conn      // TCP 连接
+	reader            *bufio.Reader // 用于读取数据的缓冲读取器
+	wg                sync.WaitGroup
+	ctx               context.Context
+	cancel            context.CancelFunc    // 用于取消上下文
+	incoming          chan protocol.Message // 用于接收来自 Hub 的消息
+	outgoing          chan protocol.Message // 用于发送消息到 Hub
+	secretKey         []byte
+	encryptionEnabled bool
 }
 
 func NewClient() *Client {
 	ctx, cancel := context.WithCancel(context.Background())
+	key, enabled := loadSymmetricKeyFromEnv()
 	return &Client{
-		ctx:      ctx,
-		cancel:   cancel,
-		incoming: make(chan protocol.Message, 256), // 带缓冲的通道
-		outgoing: make(chan protocol.Message, 256), // 带缓冲的通道
+		ctx:               ctx,
+		cancel:            cancel,
+		incoming:          make(chan protocol.Message, 256), // 带缓冲的通道
+		outgoing:          make(chan protocol.Message, 256), // 带缓冲的通道
+		secretKey:         key,
+		encryptionEnabled: enabled,
 	}
+}
+
+func loadSymmetricKeyFromEnv() ([]byte, bool) {
+	keyStr := os.Getenv("GOCHAT_PSK")
+	if keyStr == "" {
+		return []byte(defaultKey), true
+	}
+	if !isValidKeyLength(len(keyStr)) {
+		fmt.Printf("GOCHAT_PSK 长度 %d 无效，回退到演示密钥\n", len(keyStr))
+		return []byte(defaultKey), true
+	}
+	return []byte(keyStr), true
+}
+
+func isValidKeyLength(l int) bool {
+	return l == 16 || l == 24 || l == 32
+}
+
+// SetSecretKey allows overriding the symmetric key at runtime.
+func (c *Client) SetSecretKey(key []byte) error {
+	if !isValidKeyLength(len(key)) {
+		return errors.New("密钥长度必须为 16/24/32 字节")
+	}
+	c.secretKey = key
+	c.encryptionEnabled = true
+	return nil
+}
+
+func (c *Client) encryptTextMessage(message *protocol.Message) error {
+	if !c.encryptionEnabled {
+		return nil
+	}
+	ad := buildAssociatedData(message)
+	nonce, ciphertext, err := chatcrypto.EncryptAESGCM([]byte(message.TextPayload), c.secretKey, ad)
+	if err != nil {
+		return err
+	}
+	message.Nonce = nonce
+	message.Encrypted = true
+	message.TextPayload = base64.StdEncoding.EncodeToString(ciphertext)
+	return nil
+}
+
+func (c *Client) encryptFileMessage(message *protocol.Message) error {
+	if !c.encryptionEnabled {
+		return nil
+	}
+	ad := buildAssociatedData(message)
+	nonce, ciphertext, err := chatcrypto.EncryptAESGCM(message.FilePayload.Data, c.secretKey, ad)
+	if err != nil {
+		return err
+	}
+	message.Nonce = nonce
+	message.Encrypted = true
+	message.FilePayload.Data = ciphertext
+	return nil
+}
+
+func (c *Client) decryptMessage(message *protocol.Message) error {
+	if !message.Encrypted {
+		return nil
+	}
+	if !c.encryptionEnabled {
+		return errors.New("收到加密消息但本地未开启加密")
+	}
+	if len(message.Nonce) == 0 {
+		return errors.New("加密消息缺少 nonce")
+	}
+	ad := buildAssociatedData(message)
+	switch message.Type {
+	case protocol.PrivateMessage:
+		ciphertext, err := base64.StdEncoding.DecodeString(message.TextPayload)
+		if err != nil {
+			return err
+		}
+		plaintext, err := chatcrypto.DecryptAESGCM(message.Nonce, ciphertext, c.secretKey, ad)
+		if err != nil {
+			return err
+		}
+		message.TextPayload = string(plaintext)
+	case protocol.PrivateFileMessage:
+		plaintext, err := chatcrypto.DecryptAESGCM(message.Nonce, message.FilePayload.Data, c.secretKey, ad)
+		if err != nil {
+			return err
+		}
+		message.FilePayload.Data = plaintext
+	default:
+		return nil
+	}
+	message.Encrypted = false
+	return nil
+}
+
+func buildAssociatedData(message *protocol.Message) []byte {
+	return fmt.Appendf(nil, "%s|%s|%s", message.Type, message.Sender, message.Recipient)
 }
 
 // Connect 连接到服务器
@@ -70,6 +174,13 @@ func (c *Client) receiveLoop() {
 				}
 				c.Close()
 				return
+			}
+
+			if message.Encrypted {
+				if err := c.decryptMessage(message); err != nil {
+					fmt.Println("receiveLoop 解密失败:", err)
+					continue
+				}
 			}
 
 			if message.Type == protocol.TreeUpdate {
@@ -121,6 +232,12 @@ func (c *Client) SendChatMessage(msgType, recipient, payload string) {
 		Sender:      c.username,
 		Recipient:   recipient,
 		TextPayload: payload,
+	}
+	if msgType == protocol.PrivateMessage {
+		if err := c.encryptTextMessage(&message); err != nil {
+			fmt.Println("私聊消息加密失败:", err)
+			return
+		}
 	}
 	c.Send(message)
 }
@@ -177,6 +294,12 @@ func (c *Client) SendFile(msgType, recipient, filePath string) {
 				Size: fileInfo.Size(),
 				Data: []byte(encodedData),
 			},
+		}
+		if msgType == protocol.PrivateFileMessage {
+			if err := c.encryptFileMessage(&fileMsg); err != nil {
+				fmt.Printf("错误：文件加密失败: %v\n", err)
+				return
+			}
 		}
 		c.Send(fileMsg)
 	}()

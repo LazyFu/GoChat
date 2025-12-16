@@ -16,6 +16,8 @@ const (
 	PrivateFileMessage = "file_private"     // 私聊文件
 )
 
+// This should be removed, no reason here
+// TODO
 type TreePayload struct {
 	Users []string `json:"users"` // 在线用户列表
 }
@@ -27,9 +29,11 @@ type FilePayload struct {
 }
 
 type Message struct {
-	Type      string    `json:"type"`      // 消息类型
-	Sender    string    `json:"sender"`    // 发送者
-	Timestamp time.Time `json:"timestamp"` // 时间戳
+	Type      string    `json:"type"`                // 消息类型
+	Sender    string    `json:"sender"`              // 发送者
+	Timestamp time.Time `json:"timestamp"`           // 时间戳
+	Encrypted bool      `json:"encrypted,omitempty"` // 是否已加密
+	Nonce     []byte    `json:"nonce,omitempty"`     // 加密使用的随机数
 
 	Recipient   string      `json:"recipient,omitempty"`    // 接收者
 	TextPayload string      `json:"text_payload,omitempty"` // 文本内容
