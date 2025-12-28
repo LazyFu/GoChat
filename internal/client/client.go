@@ -14,7 +14,7 @@ import (
 	"sync"
 )
 
-const defaultKey = "lUSzV7dxbkJaUNBSZ2e7cpcG4ZNmvgcJT6oPcli4rls=" // 32 bytes for AES-256 demo
+const defaultKey = "1234567890abcdefghijklmnopqrstuv" // 32 bytes plain text for AES-256 demo
 
 type Client struct {
 	username          string        // 客户端唯一标识j
@@ -47,11 +47,14 @@ func loadSymmetricKeyFromEnv() ([]byte, bool) {
 	if keyStr == "" {
 		return []byte(defaultKey), true
 	}
-	if !isValidKeyLength(len(keyStr)) {
-		fmt.Printf("GOCHAT_PSK 长度 %d 无效，回退到演示密钥\n", len(keyStr))
-		return []byte(defaultKey), true
+	if len(keyStr) == 32 {
+		return []byte(keyStr), true
 	}
-	return []byte(keyStr), true
+	if decoded, err := base64.StdEncoding.DecodeString(keyStr); err == nil && len(decoded) == 32 {
+		return decoded, true
+	}
+	fmt.Printf("GOCHAT_PSK 无效（原始长度=%d，Base64解码失败或非32字节），回退到演示密钥\n", len(keyStr))
+	return []byte(defaultKey), true
 }
 
 func isValidKeyLength(l int) bool {
